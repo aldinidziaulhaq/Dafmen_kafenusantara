@@ -1,0 +1,10 @@
+.env
+.streamlit/secrets.toml
+.vscode/settings.json
+cafe_db_session.sql
+laporan_transaksi.xlsx
+
+_pycache_/
+*.pyc
+
+daftarmenu/
