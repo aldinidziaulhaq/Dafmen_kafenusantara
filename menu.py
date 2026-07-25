@@ -7,24 +7,24 @@ from PIL import Image, ImageOps
 from storage import append_new_order, load_orders
 from menu_data import MENU, BADGE_MAP
 
-#Hitung Best Seller
-try:
+# Hitung Best Seller (DI-CACHE AGAR TIDAK LEMOT)
+@st.cache_data(ttl=60) # Menyimpan hasil selama 60 detik
+def get_best_sellers():
     semua_pesanan = load_orders()
     penjualan_menu = {}
-    
-    # Menjumlahkan porsi tiap menu (hanya dari pesanan berstatus 'selesai')
     for pesanan in semua_pesanan:
         if str(pesanan.get("status", "")).strip().lower() == "selesai":
             for item in pesanan.get("items", []):
                 nama = item["nama"]
-                qty = item.get("qty", 1) # Ambil qty, default 1 jika tidak ada
+                qty = item.get("qty", 1)
                 penjualan_menu[nama] = penjualan_menu.get(nama, 0) + qty
-
-    # Ambil 3 besar nama menu dengan penjualan terbanyak
     top_sellers = sorted(penjualan_menu.items(), key=lambda x: x[1], reverse=True)[:3]
-    top_seller_names = [nama for nama, total_qty in top_sellers]
+    return [nama for nama, total_qty in top_sellers]
+
+try:
+    top_seller_names = get_best_sellers()
 except Exception:
-    top_seller_names = [] # Jika database error/kosong, jangan sampai aplikasi crash
+    top_seller_names = []
 
 # Menimpa badge bawaan di dictionary MENU
 for kategori, items in MENU.items():
@@ -44,7 +44,7 @@ st.set_page_config(
     layout="wide",
 )
 
-
+@st.cache_data(show_spinner=False)
 def get_image_base64(path, size=(400, 280)):
     """Buka & crop gambar, lalu kembalikan sebagai base64 PNG agar bisa
     ditempel langsung di dalam kartu HTML (menyatu dengan teks, bukan
@@ -384,7 +384,17 @@ def render_kartu_menu_favorit(item, kategori):
     </div>
     <div style='margin-bottom:1rem'></div>
     """, unsafe_allow_html=True)
-# ── Fungsi render satu kartu menu (dipakai ulang utk Favorit & daftar menu) ──
+
+# ── Fungsi Penghitung Callback ──
+def kurangi_qty(key):
+    if st.session_state[key] > 1:
+        st.session_state[key] -= 1
+
+def tambah_qty(key):
+    if st.session_state[key] < 10: # Maksimal 10 porsi
+        st.session_state[key] += 1
+
+@st.fragment
 def render_kartu_menu(item, kategori, key_prefix=""):
     badge_html = ""
     if item.get("badge") and item["badge"] in BADGE_MAP:
@@ -409,17 +419,18 @@ def render_kartu_menu(item, kategori, key_prefix=""):
     """, unsafe_allow_html=True)
 
     key_base = f"{key_prefix}{kategori}_{item['nama']}"
+    qty_key = f"qty_{key_base}" # Kunci penyimpanan state
     col_qty, col_btn = st.columns([1, 2])
-    #simpan product tambah dan kurang
-    if f"qty_{key_base}" not in st.session_state:
-        st.session_state[f"qty_{key_base}"] = 1
-    qty = st.session_state[f"qty_{key_base}"]
+    
+    # Inisialisasi awal jika belum ada
+    if qty_key not in st.session_state:
+        st.session_state[qty_key] = 1
+    
     with col_qty:
-        c1, c2, c3 = st.columns([0.8, 0.6, 0.8],gap="small")
+        c1, c2, c3 = st.columns([0.8, 0.6, 0.8], gap="small")
         with c1:
-            if st.button("➖", key=f"minus_{key_base}"):
-                if st.session_state[f"qty_{key_base}"] > 1:
-                    st.session_state[f"qty_{key_base}"] -= 1
+            # Gunakan on_click agar state diupdate SEBELUM layar digambar
+            st.button("➖", key=f"minus_{key_base}", on_click=kurangi_qty, args=(qty_key,))
         with c2:
             st.markdown(
                 f"""
@@ -432,30 +443,34 @@ def render_kartu_menu(item, kategori, key_prefix=""):
                     font-weight:700;
                     color:#3B2A1E;
                 ">
-                    {st.session_state[f"qty_{key_base}"]}
+                    {st.session_state[qty_key]}
                 </div>
                 """,
                 unsafe_allow_html=True
             )
         with c3:
-            if st.button("➕", key=f"plus_{key_base}"):
-                if st.session_state[f"qty_{key_base}"] < 10:
-                    st.session_state[f"qty_{key_base}"] += 1
-                    qty = st.session_state[f"qty_{key_base}"]
+            # Gunakan on_click
+            st.button("➕", key=f"plus_{key_base}", on_click=tambah_qty, args=(qty_key,))
+                    
     with col_btn:
         if st.button("🛒 Tambah", key=f"add_{key_base}", use_container_width=True):
+            qty_sekarang = st.session_state[qty_key]
             found = False
             for k in st.session_state.keranjang:
                 if k["nama"] == item["nama"]:
-                    k["qty"] += qty
+                    k["qty"] += qty_sekarang
                     found = True
                     break
             if not found:
                 st.session_state.keranjang.append({
                     "nama": item["nama"],
                     "harga": item["harga"],
-                    "qty": qty,
+                    "qty": qty_sekarang,
                 })
+            
+            # Reset angka ke 1 setelah sukses ditambahkan
+            st.session_state[qty_key] = 1 
+            st.toast(f"✅ {qty_sekarang} {item['nama']} masuk keranjang!") 
             st.rerun()
 
     st.markdown("<div style='margin-bottom:1rem'></div>", unsafe_allow_html=True)
