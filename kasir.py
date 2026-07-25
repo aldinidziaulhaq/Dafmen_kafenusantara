@@ -6,6 +6,7 @@ import datetime
 from io import BytesIO
 
 import streamlit as st
+import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 from streamlit_autorefresh import st_autorefresh
 
@@ -388,40 +389,55 @@ if not st.session_state.logged_in:
 # Auto Refresh & Data
 st_autorefresh(interval=60_000, key="kasir_refresh")
 orders = load_orders()
-baru = [o for o in orders if o.get("status") == "baru"]
-proses = [o for o in orders if o.get("status") == "proses"]
-selesai = [o for o in orders if o.get("status") == "selesai"]
+
+#Filter status pesanan
+baru = [o for o in orders if str(o.get("status", "")).lower() == "baru"]
+proses = [o for o in orders if str(o.get("status", "")).lower() in ["proses", "diproses"]]
+selesai = [o for o in orders if str(o.get("status", "")).lower() == "selesai"]
 omzet = sum(sum(i["harga"] * i["qty"] for i in o["items"]) for o in selesai)
 
-# <--- TARUH KODE FILTERNYA DI SINI
-baru = [o for o in orders if o.get("status") == "baru"]
-proses = [o for o in orders if o.get("status") == "diproses"]
-selesai = [o for o in orders if o.get("status") == "selesai"]
-omzet = sum(sum(i["harga"] * i["qty"] for i in o["items"]) for o in selesai)
-# ---> SELESAI
+# <--- NOTIFIKASI AUDIO (BUNYI SETIAP ADA ORDER MASUK BERTURUT-TURUT) --->
+# 1. Kumpulkan semua ID pesanan yang berstatus baru saat ini
+current_baru_ids = [o["id"] for o in baru]
 
-# Notifikasi Bunyi
-if baru:
-    st.markdown("""
+# 2. Buat kotak memori riwayat (session_state) jika belum ada
+if "riwayat_id_baru" not in st.session_state:
+    st.session_state.riwayat_id_baru = []
+
+# 3. Cek apakah ada ID pesanan baru yang BELUM ADA di riwayat sebelumnya
+ada_pesanan_baru = any(oid not in st.session_state.riwayat_id_baru for oid in current_baru_ids)
+
+if ada_pesanan_baru:
+    # Bikin stempel waktu acak agar Streamlit selalu merender ulang suaranya
+    waktu_trigger = datetime.datetime.now().timestamp()
+    
+    components.html(f"""
     <script>
-    (function() {
-        try {
-            var ctx = new (window.AudioContext || window.webkitAudioContext)();
-            function beep(f,d,t,tp){
-                setTimeout(function(){
+    // Memaksa browser membunyikan ulang alarm: {waktu_trigger}
+    (function() {{
+        try {{
+            var AudioContext = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContext) return;
+            var ctx = new AudioContext();
+            function beep(f,d,t,tp){{
+                setTimeout(function(){{
                     var o=ctx.createOscillator(),g=ctx.createGain();
                     o.connect(g);g.connect(ctx.destination);
                     o.frequency.value=f;o.type=tp||'square';
                     g.gain.setValueAtTime(0.3,ctx.currentTime);
                     g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+d);
                     o.start(ctx.currentTime);o.stop(ctx.currentTime+d);
-                },t);
-            }
+                }},t);
+            }}
+            // Nada alarm kasir beruntun
             beep(660,.12,0); beep(880,.12,140); beep(1100,.18,280); beep(880,.12,460); beep(1100,.25,600);
-        } catch(e){}
-    })();
+        }} catch(e){{ console.log("Audio API Error:", e); }}
+    }})();
     </script>
-    """, unsafe_allow_html=True)
+    """, height=0, width=0)
+
+# 4. Perbarui memori riwayat agar pesanan yang sudah berbunyi tidak dibunyikan 2x
+st.session_state.riwayat_id_baru = current_baru_ids
 
 # CSS & Assets Utama Dashboard
 st.markdown(MASTER_CSS, unsafe_allow_html=True)

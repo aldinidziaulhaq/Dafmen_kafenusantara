@@ -1,10 +1,8 @@
+#Secrets
 .env
 .streamlit/secrets.toml
-.vscode/settings.json
-cafe_db_session.sql
-laporan_transaksi.xlsx
+.streamlit/
 
-_pycache_/
-*.pyc
-
+# Ignore Python cache files
+__pycache__/
 daftarmenu/

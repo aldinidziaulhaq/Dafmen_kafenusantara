@@ -3,7 +3,6 @@ migrate_all.py
 --------------
 Jalankan SEKALI untuk:
 1. Import semua menu dari menu_data.py ke MySQL
-2. Import pesanan lama dari pesanan.json ke MySQL (kalau ada)
 
     python migrate_all.py
 """
