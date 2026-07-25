@@ -6,24 +6,12 @@ Aplikasi pemesanan kafe berbasis Streamlit dengan dua tampilan:
 - **Admin** (bos) - Riwayat penjualan, Diagram penjualan, Download excel & csv
 ---
 
-## Cara Menjalankan
-
-### 1. Install dependensi
-```bash
-pip install streamlit
-```
-
-### 2. Jalankan aplikasi
-```bash
-streamlit run Menu.py
-```
-
 
 ## Alur Kerja
 
 ```
 Pelanggan (menu.py)
-  └─ Pilih menu → tambah ke keranjang → isi nomor meja → Pilih metode pembayaran → Pesan    
+  └─ Pilih menu → Tambah ke keranjang → Isi Nama → Pilih metode pembayaran → Pesan → Menunggu pesanan   
 
 Kasir (kasir.py)  [auto-refresh tiap 60 detik]
   └─ Lihat pesanan BARU → klik Proses → klik Selesai

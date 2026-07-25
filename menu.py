@@ -1,14 +1,16 @@
 import base64
 from io import BytesIO
-
+import time
 import streamlit as st
+import streamlit.components.v1 as components
+from streamlit_autorefresh import st_autorefresh
 from PIL import Image, ImageOps
 
 from storage import append_new_order, load_orders
 from menu_data import MENU, BADGE_MAP
 
 # Hitung Best Seller (DI-CACHE AGAR TIDAK LEMOT)
-@st.cache_data(ttl=60) # Menyimpan hasil selama 60 detik
+@st.cache_data(ttl=60, show_spinner=False) # Menyimpan hasil selama 60 detik
 def get_best_sellers():
     semua_pesanan = load_orders()
     penjualan_menu = {}
@@ -160,7 +162,9 @@ html, body, [data-testid="stAppViewContainer"] {
 .footer { text-align:center; color:#9C8362; font-size:0.8rem; padding:2rem 0 1rem;
           border-top:1px solid #E3D6B8; margin-top:3rem; letter-spacing:0.1em; }
 
-div.stButton > button {
+/* 1. Desain untuk Tombol Normal (Tambah, Lanjut, Kosongkan, dll) */
+div.stButton > button[kind="primary"],
+div.stButton > button[kind="secondary"] {
     background: #3B2A1E !important;
     color: #F7F1E1 !important;
     border: none !important;
@@ -173,9 +177,40 @@ div.stButton > button {
     padding-right: 0 !important;
     margin: 0 !important; 
 }
-div.stButton > button:hover {
+
+div.stButton > button[kind="primary"]:hover,
+div.stButton > button[kind="secondary"]:hover {
     background: linear-gradient(135deg, #5A4030, #3B2A1E) !important;
     color: #F7F1E1 !important;
+}
+
+/* 2. Desain Container Tombol + dan - (Tertiary) */
+div.stButton > button[kind="tertiary"] {
+    background: transparent !important;
+    color: #3B2A1E !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    min-height: 40px !important; 
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+div.stButton > button[kind="tertiary"]:hover {
+    background: transparent !important;
+    color: #C9A06C !important; /* Warna ikon berubah emas saat disorot */
+    transform: scale(1.15); /* Efek sedikit membesar saat di-hover */
+    transition: all 0.2s ease-in-out;
+}
+
+/* 3. Menargetkan teks <p> di dalam tombol + dan - agar ukurannya membesar & pas di tengah */
+div.stButton > button[kind="tertiary"] p {
+    font-size: 30px !important;
+    font-weight: 500 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    line-height: 0.5 !important;
 }
 
 [data-testid="stMetricLabel"] p {
@@ -217,6 +252,76 @@ if "temp_meja" not in st.session_state:
 if "notif_sukses" not in st.session_state:
     st.session_state.notif_sukses = ""
 
+# ── PELACAK STATUS PESANAN & ALARM ──────────────────────────────────────────
+if st.session_state.get("last_order_id"):
+    # Refresh halaman tiap 60 detik
+    st_autorefresh(interval=60000, key="tunggu_pesanan")
+    
+    semua_pesanan = load_orders()
+    pesanan_saya = next((o for o in semua_pesanan if o["id"] == st.session_state.last_order_id), None)
+    
+    if pesanan_saya:
+        status_pesanan = str(pesanan_saya.get("status", "")).lower()
+        
+        if status_pesanan == "selesai":
+            st.success(f"*HORE! Pesanan Anda (Nama : {pesanan_saya['meja']}) sudah siap di Kasir!*")
+            
+            import time
+            waktu_trigger = time.time()
+            
+            # --- CEK APAKAH INI BUNYI PERTAMA KALI ---
+            is_first_time = not st.session_state.get("notif_completed_played", False)
+            
+            if is_first_time:
+                # Jika pertama kali, setting bunyi 3 kali
+                js_beep_script = """
+                    bunyiBeep();
+                    setTimeout(bunyiBeep, 1000);
+                    setTimeout(bunyiBeep, 2000);
+                """
+                # Tandai bahwa bunyi 3x sudah dimainkan
+                st.session_state.notif_completed_played = True
+            else:
+                # Jika refresh selanjutnya (belum diambil), bunyi 1 kali saja
+                js_beep_script = """
+                    bunyiBeep();
+                """
+            
+            # Jalankan script suara sesuai kondisi di atas
+            components.html(f"""
+            <script>
+            // Stempel Waktu: {waktu_trigger}
+            (function() {{
+                try {{
+                    var ctx = new (window.AudioContext || window.webkitAudioContext)();
+                    function bunyiBeep() {{
+                        var o = ctx.createOscillator();
+                        var g = ctx.createGain();
+                        o.connect(g);
+                        g.connect(ctx.destination);
+                        o.frequency.value = 880; 
+                        o.type = 'sine';
+                        g.gain.setValueAtTime(0.3, ctx.currentTime);
+                        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+                        o.start(ctx.currentTime);
+                        o.stop(ctx.currentTime + 0.4);
+                    }}
+                    
+                    {js_beep_script}
+                    
+                }} catch(e) {{ console.log("Audio Error:", e); }}
+            }})();
+            </script>
+            """, height=0, width=0)
+            
+            if st.button("Oke, Pesanan Saya Ambil Sekarang!", type="primary", use_container_width=True):
+                # Bersihkan semua jejak pesanan dari memori agar bisa pesan lagi
+                st.session_state.last_order_id = None
+                st.session_state.notif_completed_played = False
+                st.rerun()
+                
+        elif status_pesanan in ["baru", "diproses"]:
+            st.info(f"Memantau pesanan... Tejadi Refresh Otomatis 30 Detik sekali... Saat ini sedang *{status_pesanan.upper()}* di kasir.")
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.image("assets/logo_kafe.png", width=220)
@@ -273,10 +378,10 @@ with st.sidebar:
 
         # ALUR PEMBAYARAN
         if st.session_state.checkout_stage == "input":
-            st.session_state.temp_meja = st.text_input("Masukkan : Nomor Meja & Nama (Contoh : Meja 5 - Aldi) Pembayaran QRIS Wajib menggunakan nama sesuai pembayaran", value=st.session_state.temp_meja)
+            st.session_state.temp_meja = st.text_input("Masukkan Nama : (Contoh : Aldi) Pembayaran QRIS Wajib menggunakan nama sesuai pembayaran", value=st.session_state.temp_meja)
             if st.button("Lanjut ke Pembayaran", use_container_width=True, type="primary"):
                 if not st.session_state.temp_meja.strip():
-                    st.warning("Isi nomor meja & nama dulu ya!")
+                    st.warning("Isi Nama dulu ya!")
                 else:
                     st.session_state.checkout_stage = "payment"
                     st.rerun()
@@ -312,7 +417,11 @@ with st.sidebar:
                     st.rerun()
             with col_pay:
                 if st.button("Selesaikan", use_container_width=True):
-                    order_id = append_new_order(st.session_state.temp_meja.strip(),st.session_state.keranjang)
+                    # ---> TAMBAHKAN 'metode' DI BAGIAN AKHIR KURUNG <---
+                    order_id = append_new_order(st.session_state.temp_meja.strip(), st.session_state.keranjang, metode)
+                    
+                    # ---> KODE BARU: MENYIMPAN ID UNTUK DILACAK <---
+                    st.session_state.last_order_id = order_id
                     
                     # Kembalikan semua ke kondisi awal
                     st.session_state.keranjang = []
@@ -427,10 +536,12 @@ def render_kartu_menu(item, kategori, key_prefix=""):
         st.session_state[qty_key] = 1
     
     with col_qty:
-        c1, c2, c3 = st.columns([0.8, 0.6, 0.8], gap="small")
+        # Kolom disamaratakan pembagiannya dengan gap yang kecil agar rapi
+        c1, c2, c3 = st.columns([1, 1, 1], gap="small")
         with c1:
-            # Gunakan on_click agar state diupdate SEBELUM layar digambar
-            st.button("➖", key=f"minus_{key_base}", on_click=kurangi_qty, args=(qty_key,))
+            # Menggunakan simbol minus biasa (bukan emoji)
+            st.button("−", key=f"minus_{key_base}", on_click=kurangi_qty, args=(qty_key,), type="tertiary")
+            
         with c2:
             st.markdown(
                 f"""
@@ -438,8 +549,8 @@ def render_kartu_menu(item, kategori, key_prefix=""):
                     display:flex;
                     justify-content:center;
                     align-items:center;
-                    height:52px;
-                    font-size:24px;
+                    height:40px; /* Disamakan presisi dengan min-height tombol CSS */
+                    font-size:22px;
                     font-weight:700;
                     color:#3B2A1E;
                 ">
@@ -448,12 +559,13 @@ def render_kartu_menu(item, kategori, key_prefix=""):
                 """,
                 unsafe_allow_html=True
             )
+            
         with c3:
-            # Gunakan on_click
-            st.button("➕", key=f"plus_{key_base}", on_click=tambah_qty, args=(qty_key,))
+            # Menggunakan simbol plus biasa (bukan emoji)
+            st.button("+", key=f"plus_{key_base}", on_click=tambah_qty, args=(qty_key,), type="tertiary")
                     
     with col_btn:
-        if st.button("🛒 Tambah", key=f"add_{key_base}", use_container_width=True):
+        if st.button("Tambah", key=f"add_{key_base}", use_container_width=True):
             qty_sekarang = st.session_state[qty_key]
             found = False
             for k in st.session_state.keranjang:
@@ -470,7 +582,7 @@ def render_kartu_menu(item, kategori, key_prefix=""):
             
             # Reset angka ke 1 setelah sukses ditambahkan
             st.session_state[qty_key] = 1 
-            st.toast(f"✅ {qty_sekarang} {item['nama']} masuk keranjang!") 
+            st.toast(f"{qty_sekarang} {item['nama']} masuk keranjang!") 
             st.rerun()
 
     st.markdown("<div style='margin-bottom:1rem'></div>", unsafe_allow_html=True)

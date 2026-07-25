@@ -1,15 +1,15 @@
 import mysql.connector
 from mysql.connector import Error
-from mysql.connector.pooling import MySQLConnectionPool # <--- Import fitur pooling
+from mysql.connector.pooling import MySQLConnectionPool
 import os
 from pathlib import Path
+import streamlit as st # <--- Pastikan streamlit di-import
 
 def _get_config():
     # Helper untuk mendapatkan path sertifikat
     ca_cert_path = str(Path(__file__).resolve().parent / "ca.pem")
     
     try:
-        import streamlit as st
         cfg = st.secrets["mysql"]
         return {
             "host": cfg["host"],
@@ -33,22 +33,24 @@ def _get_config():
             "ssl_ca": ca_cert_path,
         }
 
-# Variabel global untuk menyimpan pool agar tidak dibuat ulang
-db_pool = None
+# 1. KUNCI KOLAM MENGGUNAKAN CACHE STREAMLIT
+# Ini akan mencegah pembuatan kolam baru setiap 5 detik saat auto-refresh
+@st.cache_resource
+def get_connection_pool():
+    try:
+        pool = MySQLConnectionPool(
+            pool_name="cafe_pool",
+            pool_size=10,            # Naikkan sedikit jadi 10 agar antrean lebih lega
+            pool_reset_session=True, 
+            **_get_config()
+        )
+        return pool
+    except Error as e:
+        raise ConnectionError(f"Gagal membuat connection pool: {e}")
 
 def get_connection():
-    global db_pool
-    # Jika pool belum dibuat, buat satu kali saja dengan 5 koneksi standby
-    if db_pool is None:
-        try:
-            db_pool = MySQLConnectionPool(
-                pool_name="cafe_pool",
-                pool_size=5,            # Menyiapkan 5 koneksi yang standby
-                pool_reset_session=True, 
-                **_get_config()
-            )
-        except Error as e:
-            raise ConnectionError(f"Gagal membuat connection pool: {e}")
+    # 2. PANGGIL KOLAM DARI CACHE
+    db_pool = get_connection_pool()
     
     # Ambil satu koneksi yang sedang nganggur dari pangkalan (pool)
     try:

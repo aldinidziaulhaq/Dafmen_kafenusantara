@@ -18,23 +18,11 @@ from db_connection import execute_query
 
 def load_orders() -> list:
     """
-    Ambil semua pesanan beserta item-nya.
-    Return format sama dengan pesanan.json lama:
-    [
-      {
-        "id": "6BE76EF3",
-        "meja": "Meja 5",
-        "waktu": "18:07:33",
-        "status": "selesai",
-        "selesai_jam": "18:07:33",
-        "items": [{"nama": ..., "harga": ..., "qty": ...}]
-      },
-      ...
-    ]
+    Ambil semua pesanan beserta item-nya dari database MySQL.
     """
     pesanan_rows = execute_query(
         """
-        SELECT id, meja, waktu, status, selesai_jam
+        SELECT id, meja, waktu, status, selesai_jam, metode_pembayaran
         FROM   pesanan
         WHERE status IN ('baru','diproses','selesai')
         ORDER  BY waktu DESC
@@ -54,12 +42,13 @@ def load_orders() -> list:
             fetch=True,
         )
         result.append({
-            "id":          p["id"],
-            "meja":        p["meja"],
-            "waktu":       str(p["waktu"]),
-            "status":      p["status"],
-            "selesai_jam": str(p["selesai_jam"]) if p["selesai_jam"] else None,
-            "items":       items,
+            "id":                p["id"],
+            "meja":              p["meja"],
+            "waktu":             str(p["waktu"]),
+            "status":            p["status"],
+            "selesai_jam":       str(p["selesai_jam"]) if p["selesai_jam"] else None,
+            "metode_pembayaran": p.get("metode_pembayaran", "Cash"),
+            "items":             items,
         })
     return result
 
@@ -105,23 +94,21 @@ def get_orders_by_status(status: str) -> list:
 # WRITE
 # ─────────────────────────────────────────────
 
-def append_new_order(meja: str, items: list) -> str:
-    """
-    Simpan pesanan baru ke DB.
-    items = [{"nama": ..., "harga": ..., "qty": ...}]
-    Return: order_id (string 8 karakter)
-    """
+# Tambahkan argumen metode_pembayaran
+def append_new_order(meja: str, items: list, metode_pembayaran: str = "Cash") -> str:
     order_id    = uuid.uuid4().hex[:8].upper()
     waktu_kini  = datetime.now().strftime("%H:%M:%S")
     total_harga = sum(i["harga"] * i["qty"] for i in items)
 
+    # Tambahkan metode_pembayaran ke dalam query INSERT
     execute_query(
         """
-        INSERT INTO pesanan (id, meja, total_harga, status, waktu)
-        VALUES (%s, %s, %s, 'baru', %s)
+        INSERT INTO pesanan (id, meja, total_harga, status, waktu, metode_pembayaran)
+        VALUES (%s, %s, %s, 'baru', %s, %s)
         """,
-        (order_id, meja, total_harga, waktu_kini),
+        (order_id, meja, total_harga, waktu_kini, metode_pembayaran),
     )
+
 
     for item in items:
         execute_query(

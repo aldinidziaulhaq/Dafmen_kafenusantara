@@ -612,7 +612,15 @@ def render_order_card(order: dict, card_class: str, badge_class: str, badge_labe
     total  = sum(i["harga"] * i["qty"] for i in order["items"])
     items  = _items_html(order["items"])
     waktu  = order.get("waktu", "-")
-    # Memasukkan custom image RP (rp_tag) ke bagian total harga di tengah
+    
+    # ---> LOGIKA BADGE PEMBAYARAN <---
+    metode = order.get("metode_pembayaran", "Cash")
+    if "QRIS" in metode:
+        metode_badge = f'<span class="badge" style="background:#E3F2FD; color:#1976D2; border:1px solid #90CAF9; margin-left:12px; font-size:0.7rem;">📱 QRIS</span>'
+    else:
+        metode_badge = f'<span class="badge" style="background:#F5F5F5; color:#616161; border:1px solid #E0E0E0; margin-left:12px; font-size:0.7rem;">💵 CASH</span>'
+
+    # Sisipkan metode_badge di sebelah order['meja']
     st.markdown(f"""
     <div class="order-card {card_class}">
         <div class="order-meta">
@@ -622,7 +630,7 @@ def render_order_card(order: dict, card_class: str, badge_class: str, badge_labe
             </div>
             <span class="order-time">{subjam_tag} {waktu}</span>
         </div>
-        <div class="order-meja">{lokasi_tag} {order['meja']}</div>
+        <div class="order-meja">{lokasi_tag} {order['meja']} {metode_badge}</div>
         <div class="order-divider"></div>
         <div class="order-item">{items}</div>
         <div class="order-total-row">
