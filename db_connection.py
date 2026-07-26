@@ -1,79 +1,47 @@
 import mysql.connector
-from mysql.connector import Error
-from mysql.connector.pooling import MySQLConnectionPool
-import os
-from pathlib import Path
-import streamlit as st # <--- Pastikan streamlit di-import
+from mysql.connector import pooling
+import streamlit as st
 
-def _get_config():
-    # Helper untuk mendapatkan path sertifikat
-    ca_cert_path = str(Path(__file__).resolve().parent / "ca.pem")
-    
-    try:
-        cfg = st.secrets["mysql"]
-        return {
-            "host": cfg["host"],
-            "port": int(cfg["port"]),
-            "user": cfg["user"],
-            "password": cfg["password"],
-            "database": cfg["database"],
-            "ssl_ca": ca_cert_path,
-        }
-    except (ImportError, FileNotFoundError, KeyError):
-        from dotenv import load_dotenv
-        env_path = Path(__file__).resolve().parent / ".env"
-        load_dotenv(dotenv_path=env_path)
-
-        return {
-            "host": os.getenv("DB_HOST"),
-            "port": int(os.getenv("DB_PORT", 3306)),
-            "user": os.getenv("DB_USER"),
-            "password": os.getenv("DB_PASSWORD"),
-            "database": os.getenv("DB_NAME"),
-            "ssl_ca": ca_cert_path,
-        }
-
-# 1. KUNCI KOLAM MENGGUNAKAN CACHE STREAMLIT
-# Ini akan mencegah pembuatan kolam baru setiap 5 detik saat auto-refresh
-@st.cache_resource
+# Menggunakan cache_resource agar pool tidak dibuat berulang kali saat layar refresh
+@st.cache_resource (show_spinner=False)
 def get_connection_pool():
-    try:
-        pool = MySQLConnectionPool(
-            pool_name="cafe_pool",
-            pool_size=10,            # Naikkan sedikit jadi 10 agar antrean lebih lega
-            pool_reset_session=True, 
-            **_get_config()
-        )
-        return pool
-    except Error as e:
-        raise ConnectionError(f"Gagal membuat connection pool: {e}")
+    dbconfig = {
+        "host": st.secrets["mysql"]["host"],
+        "user": st.secrets["mysql"]["user"],
+        "password": st.secrets["mysql"]["password"],
+        "database": st.secrets["mysql"]["database"],
+        "port": st.secrets["mysql"].get("port", 3306),
+        "autocommit": True  # Otomatis commit untuk operasi INSERT/UPDATE
+    }
+    # pool_size=5 sangat aman untuk shared-hosting/PlanetScale tanpa menyebabkan overload
+    return pooling.MySQLConnectionPool(pool_name="kafe_pool", pool_size=5, **dbconfig)
 
-def get_connection():
-    # 2. PANGGIL KOLAM DARI CACHE
-    db_pool = get_connection_pool()
-    
-    # Ambil satu koneksi yang sedang nganggur dari pangkalan (pool)
-    try:
-        return db_pool.get_connection()
-    except Error as e:
-        raise ConnectionError(f"Gagal mengambil koneksi dari pool: {e}")
+# Inisialisasi pool
+pool = get_connection_pool()
 
-def execute_query(query, params=(), fetch=False):
-    conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
+def execute_query(query, params=None, fetch=False):
+    connection = None
+    cursor = None
     try:
-        cursor.execute(query, params)
+        # Mengambil koneksi yang nganggur dari pool
+        connection = pool.get_connection()
+        cursor = connection.cursor(dictionary=True)
+        
+        cursor.execute(query, params or ())
+        
         if fetch:
-            result = cursor.fetchall()
-            return result
-        conn.commit()
-        return cursor.lastrowid
-    except Error as e:
-        conn.rollback()
-        raise RuntimeError(f"Query error: {e}")
+            return cursor.fetchall()
+        else:
+            connection.commit()
+            
+    except mysql.connector.Error as err:
+        print(f"Database Error: {err}")
+        return None if fetch else False
+        
     finally:
-        cursor.close()
-        # conn.close() di sini TIDAK lagi mematikan koneksi ke server,
-        # melainkan hanya "mengembalikan taksi ke pangkalan (pool)"
-        # agar bisa dipakai oleh query berikutnya.
-        conn.close()
+        # Pastikan cursor ditutup
+        if cursor:
+            cursor.close()
+        # Mengembalikan koneksi ke pool (BUKAN menutup/memutus total)
+        if connection and connection.is_connected():
+            connection.close()
