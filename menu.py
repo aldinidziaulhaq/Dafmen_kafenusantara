@@ -6,22 +6,13 @@ import streamlit.components.v1 as components
 from streamlit_autorefresh import st_autorefresh
 from PIL import Image, ImageOps
 
-from storage import append_new_order, load_orders
+from storage import append_new_order, load_orders, get_order_by_id, get_top_sellers_from_db
 from menu_data import MENU, BADGE_MAP
 
 # Hitung Best Seller (DI-CACHE AGAR TIDAK LEMOT)
-@st.cache_data(ttl=60, show_spinner=False) # Menyimpan hasil selama 60 detik
+@st.cache_data(ttl=60, show_spinner=False)
 def get_best_sellers():
-    semua_pesanan = load_orders()
-    penjualan_menu = {}
-    for pesanan in semua_pesanan:
-        if str(pesanan.get("status", "")).strip().lower() == "selesai":
-            for item in pesanan.get("items", []):
-                nama = item["nama"]
-                qty = item.get("qty", 1)
-                penjualan_menu[nama] = penjualan_menu.get(nama, 0) + qty
-    top_sellers = sorted(penjualan_menu.items(), key=lambda x: x[1], reverse=True)[:3]
-    return [nama for nama, total_qty in top_sellers]
+    return get_top_sellers_from_db(3)
 
 try:
     top_seller_names = get_best_sellers()
@@ -253,75 +244,71 @@ if "notif_sukses" not in st.session_state:
     st.session_state.notif_sukses = ""
 
 # ── PELACAK STATUS PESANAN & ALARM ──────────────────────────────────────────
-if st.session_state.get("last_order_id"):
-    # Refresh halaman tiap 60 detik
-    st_autorefresh(interval=60000, key="tunggu_pesanan")
-    
-    semua_pesanan = load_orders()
-    pesanan_saya = next((o for o in semua_pesanan if o["id"] == st.session_state.last_order_id), None)
-    
-    if pesanan_saya:
-        status_pesanan = str(pesanan_saya.get("status", "")).lower()
-        
-        if status_pesanan == "selesai":
-            st.success(f"*HORE! Pesanan Anda (Nama : {pesanan_saya['meja']}) sudah siap di Kasir!*")
-            
-            import time
-            waktu_trigger = time.time()
-            
-            # --- CEK APAKAH INI BUNYI PERTAMA KALI ---
-            is_first_time = not st.session_state.get("notif_completed_played", False)
-            
-            if is_first_time:
-                # Jika pertama kali, setting bunyi 3 kali
-                js_beep_script = """
-                    bunyiBeep();
-                    setTimeout(bunyiBeep, 1000);
-                    setTimeout(bunyiBeep, 2000);
-                """
-                # Tandai bahwa bunyi 3x sudah dimainkan
-                st.session_state.notif_completed_played = True
-            else:
-                # Jika refresh selanjutnya (belum diambil), bunyi 1 kali saja
-                js_beep_script = """
-                    bunyiBeep();
-                """
-            
-            # Jalankan script suara sesuai kondisi di atas
-            components.html(f"""
-            <script>
-            // Stempel Waktu: {waktu_trigger}
-            (function() {{
-                try {{
-                    var ctx = new (window.AudioContext || window.webkitAudioContext)();
-                    function bunyiBeep() {{
-                        var o = ctx.createOscillator();
-                        var g = ctx.createGain();
-                        o.connect(g);
-                        g.connect(ctx.destination);
-                        o.frequency.value = 880; 
-                        o.type = 'sine';
-                        g.gain.setValueAtTime(0.3, ctx.currentTime);
-                        g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-                        o.start(ctx.currentTime);
-                        o.stop(ctx.currentTime + 0.4);
-                    }}
-                    
-                    {js_beep_script}
-                    
-                }} catch(e) {{ console.log("Audio Error:", e); }}
-            }})();
-            </script>
-            """, height=0, width=0)
-            
-            if st.button("Oke, Pesanan Saya Ambil Sekarang!", type="primary", use_container_width=True):
-                # Bersihkan semua jejak pesanan dari memori agar bisa pesan lagi
-                st.session_state.last_order_id = None
-                st.session_state.notif_completed_played = False
-                st.rerun()
-                
-        elif status_pesanan in ["baru", "diproses"]:
-            st.info(f"Memantau pesanan... Tejadi Refresh Otomatis 30 Detik sekali... Saat ini sedang *{status_pesanan.upper()}* di kasir.")
+@st.fragment
+def render_pelacak_pesanan():
+    if not st.session_state.get("last_order_id"):
+        return
+
+    st_autorefresh(interval=40000, key="tunggu_pesanan")
+
+    try:
+        pesanan_saya = get_order_by_id(st.session_state.last_order_id)  # lihat poin 2 di bawah
+    except Exception:
+        st.warning("Gagal memuat status pesanan, mencoba lagi otomatis...")
+        return
+
+    if not pesanan_saya:
+        return
+
+    status_pesanan = str(pesanan_saya.get("status", "")).lower()
+
+    if status_pesanan == "selesai":
+        st.success(f"HORE! Pesanan Anda (Nama : {pesanan_saya['meja']}) sudah siap di Kasir!")
+        waktu_trigger = time.time()  # time sudah di-import di atas file, tidak perlu import ulang
+        is_first_time = not st.session_state.get("notif_completed_played", False)
+        if is_first_time:
+            js_beep_script = """
+                bunyiBeep();
+                setTimeout(bunyiBeep, 1000);
+                setTimeout(bunyiBeep, 2000);
+            """
+            st.session_state.notif_completed_played = True
+        else:
+            js_beep_script = """
+                bunyiBeep();
+            """
+        components.html(f"""
+        <script>
+        (function() {{
+            try {{
+                var ctx = new (window.AudioContext || window.webkitAudioContext)();
+                function bunyiBeep() {{
+                    var o = ctx.createOscillator();
+                    var g = ctx.createGain();
+                    o.connect(g);
+                    g.connect(ctx.destination);
+                    o.frequency.value = 880; 
+                    o.type = 'sine';
+                    g.gain.setValueAtTime(0.3, ctx.currentTime);
+                    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+                    o.start(ctx.currentTime);
+                    o.stop(ctx.currentTime + 0.4);
+                }}
+                {js_beep_script}
+            }} catch(e) {{ console.log("Audio Error:", e); }}
+        }})();
+        </script>
+        """, height=0, width=0)
+
+        if st.button("Oke, Pesanan Saya Ambil Sekarang!", type="primary", use_container_width=True):
+            st.session_state.last_order_id = None
+            st.session_state.notif_completed_played = False
+            st.rerun(scope="fragment")
+
+    elif status_pesanan in ["baru", "diproses"]:
+        st.info(f"Memantau pesanan... Terjadi Refresh Otomatis 40 Detik sekali... Saat ini sedang {status_pesanan.upper()} di kasir.")
+
+render_pelacak_pesanan()
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.image("assets/logo_kafe.png", width=220)
@@ -394,7 +381,6 @@ with st.sidebar:
             if metode == "Scan QRIS":
                 st.info("Silakan scan QRIS di bawah ini:")
                 st.image("assets/qris.jpeg", caption="QRIS Kafe Nusantara")
-                # Fitur Download QRIS
                 try:
                     with open("assets/qris.jpeg", "rb") as file:
                         st.download_button(
@@ -409,7 +395,6 @@ with st.sidebar:
             else:
                 st.write("Silakan menuju kasir untuk pembayaran tunai.")
 
-            # Layout tombol dibuat simetris dengan st.columns
             col_back, col_pay = st.columns(2)
             with col_back:
                 if st.button("Kembali", use_container_width=True):
@@ -417,20 +402,16 @@ with st.sidebar:
                     st.rerun()
             with col_pay:
                 if st.button("Selesaikan", use_container_width=True):
-                    # ---> TAMBAHKAN 'metode' DI BAGIAN AKHIR KURUNG <---
-                    order_id = append_new_order(st.session_state.temp_meja.strip(), st.session_state.keranjang, metode)
-                    
-                    # ---> KODE BARU: MENYIMPAN ID UNTUK DILACAK <---
-                    st.session_state.last_order_id = order_id
-                    
-                    # Kembalikan semua ke kondisi awal
-                    st.session_state.keranjang = []
-                    st.session_state.temp_meja = ""                  # KOSONGKAN KOLOM NAMA
-                    st.session_state.checkout_stage = "input"        # KEMBALIKAN KE TAHAP INPUT
-                    
-                    # Simpan notifikasi ke session_state agar bertahan setelah rerun
-                    st.session_state.notif_sukses = f"Pesanan #{order_id} Berhasil Terkirimkan!!"
-                    st.rerun()
+                    try:
+                        order_id = append_new_order(st.session_state.temp_meja.strip(), st.session_state.keranjang, metode)
+                        st.session_state.last_order_id = order_id
+                        st.session_state.keranjang = []
+                        st.session_state.temp_meja = ""
+                        st.session_state.checkout_stage = "input"
+                        st.session_state.notif_sukses = f"Pesanan #{order_id} Berhasil Terkirimkan!!"
+                        st.rerun()
+                    except Exception:
+                        st.error("Server sedang sibuk, pesanan gagal terkirim. Coba klik 'Selesaikan' lagi.")
 
         if st.button("Kosongkan Keranjang", use_container_width=True):
             st.session_state.keranjang = []
@@ -579,8 +560,6 @@ def render_kartu_menu(item, kategori, key_prefix=""):
                     "harga": item["harga"],
                     "qty": qty_sekarang,
                 })
-            
-            # Reset angka ke 1 setelah sukses ditambahkan
             st.session_state[qty_key] = 1 
             st.toast(f"{qty_sekarang} {item['nama']} masuk keranjang!") 
             st.rerun()

@@ -204,7 +204,7 @@ all_orders = load_orders()
 # adalah omzet dari pesanan yang sudah berstatus 'Selesai'.
 selesai_orders = [
     o for o in all_orders
-    if str(o.get("status", "Selesai")).strip().capitalize() == "Selesai"
+    if str(o.get("status", "")).strip().lower() == "selesai"
 ]
 total_omzet = sum(i["harga"] * i["qty"] for o in selesai_orders for i in o["items"])
 total_item_terjual = sum(i["qty"] for o in selesai_orders for i in o["items"])

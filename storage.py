@@ -89,6 +89,19 @@ def get_orders_by_status(status: str) -> list:
         })
     return result
 
+def get_top_sellers_from_db(limit: int = 3) -> list:
+    """Ambil top menu terlaris langsung dari database (jauh lebih ringan)."""
+    query = """
+        SELECT pi.nama_item, SUM(pi.jumlah) as total_terjual
+        FROM pesanan_item pi
+        JOIN pesanan p ON pi.pesanan_id = p.id
+        WHERE p.status = 'selesai'
+        GROUP BY pi.nama_item
+        ORDER BY total_terjual DESC
+        LIMIT %s
+    """
+    hasil = execute_query(query, (limit,), fetch=True)
+    return [row["nama_item"] for row in hasil]
 
 # ─────────────────────────────────────────────
 # WRITE
@@ -202,7 +215,15 @@ def migrate_from_json(json_path: str = "pesanan.json") -> int:
     return count
 def clear_all_done():
     """
-    Hapus semua pesanan yang statusnya selesai"""
+    Hapus semua pesanan yang statusnya selesai (Hapus item dulu, baru pesanannya)
+    """
+    execute_query(
+        """
+        DELETE pi FROM pesanan_item pi 
+        JOIN pesanan p ON pi.pesanan_id = p.id 
+        WHERE p.status = 'selesai'
+        """
+    )
     execute_query(
         "DELETE FROM pesanan WHERE status = 'selesai'"
     )
