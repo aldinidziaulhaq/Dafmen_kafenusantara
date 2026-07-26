@@ -18,8 +18,10 @@ from db_connection import execute_query
 
 def load_orders() -> list:
     """
-    Ambil pesanan aktif (baru/diproses/batal) tanpa batasan tanggal,
-    sedangkan status 'selesai' dibatasi khusus hari ini (CURDATE).
+    Ambil pesanan aktif (baru/diproses/batal) tanpa batasan tanggal agar kasir
+    langsung mendeteksi pesanan masuk kapan pun. Status 'selesai' dibatasi
+    hanya untuk hari ini (berdasarkan selesai_jam, bukan waktu pesanan dibuat).
+    Menggunakan 1x Query (JOIN) untuk mencegah N+1 query problem.
     """
     query = """
         SELECT 
@@ -28,20 +30,21 @@ def load_orders() -> list:
         FROM pesanan p
         LEFT JOIN pesanan_item pi ON p.id = pi.pesanan_id
         WHERE p.status IN ('baru', 'diproses', 'batal')
-           OR (p.status = 'selesai' AND DATE(p.waktu) = CURDATE())
+           OR (p.status = 'selesai' AND DATE(p.selesai_jam) = CURDATE())
         ORDER BY p.waktu DESC
     """
-    
+
     rows = execute_query(query, fetch=True)
     if not rows:
         return []
 
     # Kelompokkan data (Grouping) di sisi Python menggunakan Dictionary
     orders_dict = {}
-    
+
     for row in rows:
         o_id = row["id"]
-        
+
+        # Jika ID pesanan belum ada di dictionary, buat format utamanya
         if o_id not in orders_dict:
             orders_dict[o_id] = {
                 "id": o_id,
@@ -52,14 +55,17 @@ def load_orders() -> list:
                 "metode_pembayaran": row.get("metode_pembayaran", "Cash"),
                 "items": []
             }
-        
-        if row["nama_item"]:
+
+        # Masukkan detail item ke dalam list "items" di pesanan tersebut
+        if row["nama_item"]:  # Pastikan ada item yang dipesan
             orders_dict[o_id]["items"].append({
                 "nama": row["nama_item"],
                 "harga": row["harga_satuan"],
                 "qty": row["jumlah"]
             })
-            
+
+    # Mengembalikan nilai dictionary sebagai list.
+    # (Python 3.7+ otomatis mempertahankan urutan DESC dari Query awal)
     return list(orders_dict.values())
 
 
@@ -120,7 +126,7 @@ def get_top_sellers_from_db(limit: int = 3) -> list:
 # Tambahkan argumen metode_pembayaran
 def append_new_order(meja: str, items: list, metode_pembayaran: str = "Cash") -> str:
     order_id    = uuid.uuid4().hex[:8].upper()
-    waktu_kini  = datetime.now().strftime("%H:%M:%S")
+    waktu_kini  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     total_harga = sum(i["harga"] * i["qty"] for i in items)
 
     # Tambahkan metode_pembayaran ke dalam query INSERT
@@ -151,7 +157,7 @@ def update_order_status(order_id: str, status: str) -> None:
     """Update status pesanan ke database."""
     if status == "selesai":
         # Gunakan 'datetime.now()' karena sudah diimport dari modul datetime
-        waktu_selesai = datetime.now().strftime("%H:%M:%S")
+        waktu_selesai = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         execute_query(
             "UPDATE pesanan SET status=%s, selesai_jam=%s WHERE id=%s",
             (status, waktu_selesai, str(order_id)),
