@@ -18,8 +18,8 @@ from db_connection import execute_query
 
 def load_orders() -> list:
     """
-    Ambil pesanan HARI INI beserta item-nya dalam 1x Query (JOIN).
-    Mencegah N+1 query problem dan jauh lebih efisien di memori.
+    Ambil pesanan aktif (baru/diproses/batal) tanpa batasan tanggal,
+    sedangkan status 'selesai' dibatasi khusus hari ini (CURDATE).
     """
     query = """
         SELECT 
@@ -27,8 +27,8 @@ def load_orders() -> list:
             pi.nama_item, pi.harga_satuan, pi.jumlah
         FROM pesanan p
         LEFT JOIN pesanan_item pi ON p.id = pi.pesanan_id
-        WHERE p.status IN ('baru', 'diproses', 'selesai', 'batal')
-          AND DATE(p.waktu) = CURDATE() 
+        WHERE p.status IN ('baru', 'diproses', 'batal')
+           OR (p.status = 'selesai' AND DATE(p.waktu) = CURDATE())
         ORDER BY p.waktu DESC
     """
     
@@ -42,7 +42,6 @@ def load_orders() -> list:
     for row in rows:
         o_id = row["id"]
         
-        # Jika ID pesanan belum ada di dictionary, buat format utamanya
         if o_id not in orders_dict:
             orders_dict[o_id] = {
                 "id": o_id,
@@ -54,16 +53,13 @@ def load_orders() -> list:
                 "items": []
             }
         
-        # Masukkan detail item ke dalam list "items" di pesanan tersebut
-        if row["nama_item"]: # Pastikan ada item yang dipesan
+        if row["nama_item"]:
             orders_dict[o_id]["items"].append({
                 "nama": row["nama_item"],
                 "harga": row["harga_satuan"],
                 "qty": row["jumlah"]
             })
             
-    # Mengembalikan nilai dictionary sebagai list. 
-    # (Python 3.7+ otomatis mempertahankan urutan DESC dari Query awal)
     return list(orders_dict.values())
 
 
