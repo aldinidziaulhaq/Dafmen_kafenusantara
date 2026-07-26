@@ -4,7 +4,7 @@ import pandas as pd
 from io import BytesIO
 from datetime import datetime
 from PIL import Image, ImageOps
-from storage import load_orders
+from storage import get_full_history, delete_orders_by_range, clear_all_history
 
 st.set_page_config(
     page_title="Laporan Eksekutif — Cafe Nusantara",
@@ -137,6 +137,13 @@ unduh_tag = f'<img src="data:image/png;base64,{unduh_b64}" width="20" style="ver
 
 pencarian_b64 = get_image_base64("assets/pencarian.png", size=(24,24))
 pencarian_tag = f'<img src="data:image/png;base64,{pencarian_b64}" width="20" style="vertical-align:middle;margin-right:6px;">' if pencarian_b64 else "🔍"
+
+kalenderku_b64 = get_image_base64("assets/kalender.png", size=(24,24))
+kalenderku_tag = f'<img src="data:image/png;base64,{kalenderku_b64}" width="20" style="vertical-align:middle;margin-right:6px;">' if kalenderku_b64 else "📅"
+
+tong_b64 = get_image_base64("assets/tongsampah.png", size=(24,24))
+tong_tag = f'<img src="data:image/png;base64,{tong_b64}" width="20" style="vertical-align:middle;margin-right:6px;">' if tong_b64 else "🗑"
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ═━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -198,7 +205,7 @@ if not st.session_state.admin_ok:
 # ═══════════════════════════════════════════════════════════════════════════════
 # LOAD & PREPARE DATA (FOKUS PADA LAPORAN / TRANSAKSI SELESAI)
 # ═══════════════════════════════════════════════════════════════════════════════
-all_orders = load_orders()
+all_orders = get_full_history()
 
 # Karena ini untuk laporan perusahaan (Bos), kita asumsikan data yang dihitung 
 # adalah omzet dari pesanan yang sudah berstatus 'Selesai'.
@@ -222,6 +229,10 @@ for o in selesai_orders:
         "Total Penjualan": total,
     })
 df_sales = pd.DataFrame(rows) if rows else pd.DataFrame()
+if not df_sales.empty:
+    df_sales["Waktu_dt"] = pd.to_datetime(df_sales["Waktu"], errors="coerce")
+    df_sales["Hari"]  = df_sales["Waktu_dt"].dt.strftime("%A, %d %b %Y")
+    df_sales["Bulan"] = df_sales["Waktu_dt"].dt.strftime("%B %Y")
 
 # 2. Siapkan DataFrame Menu Terlaris
 menu_cnt: dict = {}
@@ -259,9 +270,9 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     
-    # Hanya ada 3 Navigasi Sesuai Permintaan
+    # Hanya ada 4 Navigasi Sesuai Permintaan
     nav = st.radio(
-        "nav", ["Total Penjualan", "Menu Terlaris", "Export Laporan"],
+        "nav", ["Total Penjualan", "Menu Terlaris", "Export Laporan", "Kelola Data"],
         label_visibility="collapsed",
     )
     st.markdown("---")
@@ -305,6 +316,26 @@ if nav == "Total Penjualan":
     section(riwayat_tag, "Riwayat Penjualan", "Daftar seluruh transaksi masuk (Selesai)")
 
     if not df_sales.empty:
+        tampilan = st.radio("Tampilkan:", ["Semua Transaksi", "Rekap Per Bulan", "Rekap Per Hari"], horizontal=True, key="tampilan1")
+
+        if tampilan == "Rekap Per Bulan":
+            rekap = df_sales.groupby("Bulan").agg(
+                Total_Omzet=("Total Penjualan", "sum"),
+                Jumlah_Transaksi=("ID Transaksi", "count"),
+            ).reset_index().sort_values("Bulan", ascending=False)
+            st.dataframe(rekap, use_container_width=True, hide_index=True,
+                column_config={"Total_Omzet": st.column_config.NumberColumn("Total Omzet (Rp)", format="Rp %d")})
+            st.stop()
+
+        elif tampilan == "Rekap Per Hari":
+            rekap = df_sales.groupby("Hari").agg(
+                Total_Omzet=("Total Penjualan", "sum"),
+                Jumlah_Transaksi=("ID Transaksi", "count"),
+            ).reset_index().sort_values("Hari", ascending=False)
+            st.dataframe(rekap, use_container_width=True, hide_index=True,
+                column_config={"Total_Omzet": st.column_config.NumberColumn("Total Omzet (Rp)", format="Rp %d")})
+            st.stop()
+
         # Pilihan urutan untuk bos yang mengecek laporan
         sort_order = st.selectbox("Urutkan Berdasarkan:", ["Terbaru", "Terlama", "Nilai Transaksi Tertinggi"], key="sort1")
         
@@ -414,7 +445,65 @@ elif nav == "Export Laporan":
     else:
         st.info("Belum ada data untuk diekspor.")
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4. KELOLA DATA — hapus riwayat sesuai rentang atau seluruhnya
+# ═══════════════════════════════════════════════════════════════════════════════
+elif nav == "Kelola Data":
+    section(tong_tag, "Kelola Data Database", "Hapus riwayat transaksi secara permanen — gunakan dengan hati-hati")
 
+    if not df_sales.empty:
+        urut = st.radio("Urutkan Tabel:", ["Terbaru", "Terlama"], horizontal=True, key="sort_kelola")
+        df_kelola = df_sales.sort_values("Waktu_dt", ascending=(urut == "Terlama"))
+        st.dataframe(
+            df_kelola[["ID Transaksi", "Nama / Meja", "Rincian Item", "Waktu", "Total Penjualan"]],
+            use_container_width=True, hide_index=True, height=300,
+            column_config={"Total Penjualan": st.column_config.NumberColumn("Total (Rp)", format="Rp %d")},
+        )
+    else:
+        st.info("Belum ada data transaksi selesai di database.")
+
+    st.markdown("<div style='margin:1.5rem 0'></div>", unsafe_allow_html=True)
+    section(kalenderku_tag, "Hapus Berdasarkan Rentang Tanggal", "Hapus transaksi dalam periode tertentu saja")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        tgl_awal = st.date_input("Dari Tanggal")
+    with col2:
+        tgl_akhir = st.date_input("Sampai Tanggal")
+
+    if st.button("Hapus Data di Rentang Ini", use_container_width=True):
+        st.session_state["konfirmasi_range"] = True
+
+    if st.session_state.get("konfirmasi_range"):
+        st.warning(f"Yakin hapus SEMUA data dari *{tgl_awal}* sampai *{tgl_akhir}*? Tindakan ini permanen.")
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            if st.button("Ya, Hapus Sekarang", use_container_width=True):
+                jumlah = delete_orders_by_range(str(tgl_awal), str(tgl_akhir))
+                st.session_state["konfirmasi_range"] = False
+                st.success(f"{jumlah} pesanan berhasil dihapus.")
+                st.rerun()
+        with cc2:
+            if st.button("Batal", use_container_width=True):
+                st.session_state["konfirmasi_range"] = False
+                st.rerun()
+
+    st.markdown("<div style='margin:2rem 0'></div>", unsafe_allow_html=True)
+    st.markdown("""
+    <div style="border:1.5px solid #C0392B; border-radius:10px; padding:1rem 1.2rem; background:#FDEDEC;">
+        <div style="font-weight:700; color:#C0392B; margin-bottom:.3rem;">⚠️ Zona Berbahaya</div>
+        <div style="font-size:.85rem; color:#7B241C;">Menghapus SELURUH data akan menghilangkan semua riwayat pesanan dari awal, Riwayat dari database server juga akan ikut terhapus, tanpa terkecuali. Tidak bisa dibatalkan.</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    konfirmasi_teks = st.text_input("Ketik 'HAPUS SEMUA' untuk mengaktifkan tombol di bawah:")
+    if konfirmasi_teks.strip() == "HAPUS SEMUA":
+        if st.button("HAPUS SELURUH DATA DATABASE", use_container_width=True):
+            clear_all_history()
+            st.success("Seluruh data database berhasil dihapus.")
+            st.rerun()
+    else:
+        st.button("HAPUS SELURUH DATA DATABASE", use_container_width=True, disabled=True)
 # ═══════════════════════════════════════════════════════════════════════════════
 # FOOTER
 # ═══════════════════════════════════════════════════════════════════════════════

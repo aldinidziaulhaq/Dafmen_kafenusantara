@@ -119,6 +119,79 @@ def get_top_sellers_from_db(limit: int = 3) -> list:
     hasil = execute_query(query, (limit,), fetch=True)
     return [row["nama_item"] for row in hasil]
 
+def get_full_history() -> list:
+    """
+    Ambil SELURUH riwayat pesanan dari database tanpa filter tanggal/status.
+    Khusus dipakai untuk Laporan Eksekutif (admin.py) — beda dengan load_orders()
+    yang dipakai Kasir.py (itu memang sengaja dibatasi untuk tampilan real-time).
+    """
+    query = """
+        SELECT 
+            p.id, p.meja, p.waktu, p.status, p.selesai_jam, p.metode_pembayaran,
+            pi.nama_item, pi.harga_satuan, pi.jumlah
+        FROM pesanan p
+        LEFT JOIN pesanan_item pi ON p.id = pi.pesanan_id
+        ORDER BY p.waktu DESC
+    """
+    rows = execute_query(query, fetch=True)
+    if not rows:
+        return []
+
+    orders_dict = {}
+    for row in rows:
+        o_id = row["id"]
+        if o_id not in orders_dict:
+            orders_dict[o_id] = {
+                "id": o_id,
+                "meja": row["meja"],
+                "waktu": str(row["waktu"]),
+                "status": row["status"],
+                "selesai_jam": str(row["selesai_jam"]) if row["selesai_jam"] else None,
+                "metode_pembayaran": row.get("metode_pembayaran", "Cash"),
+                "items": []
+            }
+        if row["nama_item"]:
+            orders_dict[o_id]["items"].append({
+                "nama": row["nama_item"],
+                "harga": row["harga_satuan"],
+                "qty": row["jumlah"]
+            })
+    return list(orders_dict.values())
+
+
+def delete_orders_by_range(start_date: str, end_date: str) -> int:
+    """
+    Hapus pesanan + item-nya dalam rentang tanggal tertentu (inclusive).
+    start_date & end_date format: 'YYYY-MM-DD'. Mengembalikan jumlah pesanan yang dihapus.
+    """
+    result = execute_query(
+        "SELECT COUNT(*) AS cnt FROM pesanan WHERE DATE(waktu) BETWEEN %s AND %s",
+        (start_date, end_date), fetch=True
+    )
+    count = result[0]["cnt"] if result else 0
+
+    execute_query(
+        """
+        DELETE pi FROM pesanan_item pi
+        JOIN pesanan p ON pi.pesanan_id = p.id
+        WHERE DATE(p.waktu) BETWEEN %s AND %s
+        """,
+        (start_date, end_date),
+    )
+    execute_query(
+        "DELETE FROM pesanan WHERE DATE(waktu) BETWEEN %s AND %s",
+        (start_date, end_date),
+    )
+    return count
+
+
+def clear_all_history() -> None:
+    """
+    HAPUS SELURUH data pesanan & item dari database — semua status, semua tanggal.
+    TINDAKAN PERMANEN, TIDAK BISA DIBATALKAN. Gunakan dengan sangat hati-hati.
+    """
+    execute_query("DELETE FROM pesanan_item")
+    execute_query("DELETE FROM pesanan")
 # ─────────────────────────────────────────────
 # WRITE
 # ─────────────────────────────────────────────
