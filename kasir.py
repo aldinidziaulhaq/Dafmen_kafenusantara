@@ -10,7 +10,7 @@ import streamlit.components.v1 as components
 from PIL import Image, ImageOps
 from streamlit_autorefresh import st_autorefresh
 
-from storage import clear_all_done, load_orders, update_order_status
+from storage import load_orders, update_order_status
 
 # Config Streamlit
 st.set_page_config(
@@ -567,11 +567,6 @@ with st.sidebar:
     if st.button("Refresh Sekarang", use_container_width=True):
         st.rerun()
 
-    st.markdown("<div style='margin:.4rem 0'></div>", unsafe_allow_html=True)
-    if st.button("Hapus Semua Selesai", use_container_width=True):
-        clear_all_done()
-        st.success("Riwayat selesai dihapus.")
-        st.rerun()
 
     st.markdown("<div style='margin:.4rem 0'></div>", unsafe_allow_html=True)
     if st.button("Logout", use_container_width=True):
